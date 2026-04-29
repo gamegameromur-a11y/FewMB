@@ -11,7 +11,6 @@ on:
 
 env:
   PROJECT_NAME: FewMB
-  VCPKG_ROOT: C:\vcpkg
 
 jobs:
   build-windows:
@@ -21,16 +20,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # vcpkg'ın WebView2 portu NuGet paketini indirir ve
-      # CMake için WebView2::WebView2 hedefini doğru şekilde oluşturur.
-      - name: Install WebView2 via vcpkg
-        shell: pwsh
-        run: |
-          & "$env:VCPKG_ROOT\vcpkg.exe" install webview2:x64-windows
-          & "$env:VCPKG_ROOT\vcpkg.exe" integrate install
-
-      # MSVC araçlarını (cl.exe, nmake, vb.) PATH'e ekler.
-      # ilammy/msvc-dev-cmd@v1 sektörde standart, güvenilir bir action'dır.
       - name: Setup MSVC Environment
         uses: ilammy/msvc-dev-cmd@v1
         with:
@@ -39,16 +28,25 @@ jobs:
       - name: Get CMake
         uses: lukka/get-cmake@latest
 
+      - name: Setup vcpkg
+        shell: bash
+        run: |
+          git clone https://github.com/Microsoft/vcpkg.git vcpkg
+          cd vcpkg
+          ./bootstrap-vcpkg.sh
+          echo "VCPKG_ROOT=$PWD" >> $GITHUB_ENV
+
+      - name: Install WebView2 via vcpkg
+        shell: bash
+        run: |
+          $VCPKG_ROOT/vcpkg install webview2:x64-windows
+          $VCPKG_ROOT/vcpkg integrate install
+
       - name: Configure
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path build
+          New-Item -ItemType Directory -Force -Path build | Out-Null
           Set-Location build
-          # CMakeLists.txt'deki GCC bayrakları (-O3 -Wall -Wextra) MSVC ile uyumsuz.
-          # CMAKE_CXX_FLAGS ile eşdeğer MSVC bayrakları kullanıyoruz:
-          #   /O2  → optimizasyon (-O2/-O3 karşılığı)
-          #   /W3  → uyarı seviyesi (-Wall karşılığı)
-          #   /EHsc → C++ exception handling (zorunlu)
           cmake .. `
             -A x64 `
             -DCMAKE_BUILD_TYPE=Release `
@@ -59,8 +57,6 @@ jobs:
         shell: pwsh
         run: |
           Set-Location build
-          # $(nproc) Linux komutudur, PowerShell'de çalışmaz.
-          # --parallel bayrağı CPU sayısını otomatik algılar.
           cmake --build . --config Release --parallel
 
       - name: Copy Runtime DLLs
@@ -69,35 +65,25 @@ jobs:
           $outDir = "build\bin\Release"
           New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 
-          # WebView2Loader.dll — vcpkg'dan kopyala
           $vcpkgDll = "$env:VCPKG_ROOT\installed\x64-windows\bin\WebView2Loader.dll"
           if (Test-Path $vcpkgDll) {
             Copy-Item $vcpkgDll $outDir -Force
             Write-Host "Copied WebView2Loader.dll from vcpkg"
-          }
-
-          # Eğer vcpkg'da yoksa Edge kurulumuna bak
-          $edgeBase = "C:\Program Files (x86)\Microsoft\EdgeWebView\Application"
-          if (-not (Test-Path "$outDir\WebView2Loader.dll") -and (Test-Path $edgeBase)) {
-            $dll = Get-ChildItem $edgeBase -Recurse -Filter "WebView2Loader.dll" |
-                   Select-Object -First 1
-            if ($dll) {
-              Copy-Item $dll.FullName $outDir -Force
-              Write-Host "Copied WebView2Loader.dll from Edge installation"
-            }
+          } else {
+            Write-Warning "WebView2Loader.dll not found in vcpkg"
           }
 
       - name: Package
         shell: pwsh
         run: |
-          # Çıktı dizinini otomatik belirle
           $candidates = @("build\bin\Release", "build\Release", "build\bin", "build")
-          $relPath = $candidates | Where-Object { Test-Path $_ -PathType Container } |
-                     Select-Object -First 1
+          $relPath = $candidates | Where-Object { Test-Path $_ -PathType Container } | Select-Object -First 1
+          
           if (-not $relPath) {
             Write-Error "Could not locate build output directory"
             exit 1
           }
+          
           Write-Host "Packaging from: $relPath"
           Compress-Archive -Path "$relPath\*" -DestinationPath "FewMB-Windows-x64.zip" -Force
           $sizeMB = [math]::Round((Get-Item "FewMB-Windows-x64.zip").Length / 1MB, 2)
@@ -124,7 +110,6 @@ jobs:
           name: FewMB-Windows-x64
           path: .
 
-      # softprops/action-gh-release@v1 → v2 (v1 artık bakımsız)
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
