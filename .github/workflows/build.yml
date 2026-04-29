@@ -1,4 +1,4 @@
-name: Build FewMB
+name: Build_FewMB
 
 on:
   push:
