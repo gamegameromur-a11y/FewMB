@@ -1,4 +1,4 @@
-name: Build_FewMB
+name: Build FewMB
 
 on:
   push:
@@ -29,18 +29,18 @@ jobs:
         uses: lukka/get-cmake@latest
 
       - name: Setup vcpkg
-        shell: bash
+        shell: pwsh
         run: |
           git clone https://github.com/Microsoft/vcpkg.git vcpkg
           cd vcpkg
-          ./bootstrap-vcpkg.sh
+          .\bootstrap-vcpkg.bat
           echo "VCPKG_ROOT=$PWD" >> $GITHUB_ENV
 
       - name: Install WebView2 via vcpkg
-        shell: bash
+        shell: pwsh
         run: |
-          $VCPKG_ROOT/vcpkg install webview2:x64-windows
-          $VCPKG_ROOT/vcpkg integrate install
+          &"$env:VCPKG_ROOT/vcpkg.exe" install "webview2:x64-windows"
+          &"$env:VCPKG_ROOT/vcpkg.exe" integrate install
 
       - name: Configure
         shell: pwsh
@@ -50,7 +50,7 @@ jobs:
           cmake .. `
             -A x64 `
             -DCMAKE_BUILD_TYPE=Release `
-            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake" `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
             -DCMAKE_CXX_FLAGS="/O2 /W3 /EHsc"
 
       - name: Build
@@ -62,10 +62,10 @@ jobs:
       - name: Copy Runtime DLLs
         shell: pwsh
         run: |
-          $outDir = "build\bin\Release"
+          $outDir = "build/Release"
           New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 
-          $vcpkgDll = "$env:VCPKG_ROOT\installed\x64-windows\bin\WebView2Loader.dll"
+          $vcpkgDll = "$env:VCPKG_ROOT/installed/x64-windows/bin/WebView2Loader.dll"
           if (Test-Path $vcpkgDll) {
             Copy-Item $vcpkgDll $outDir -Force
             Write-Host "Copied WebView2Loader.dll from vcpkg"
@@ -76,8 +76,14 @@ jobs:
       - name: Package
         shell: pwsh
         run: |
-          $candidates = @("build\bin\Release", "build\Release", "build\bin", "build")
-          $relPath = $candidates | Where-Object { Test-Path $_ -PathType Container } | Select-Object -First 1
+          $candidates = @("build/Release", "build/bin/Release", "build/bin", "build")
+          $relPath = $null
+          foreach ($candidate in $candidates) {
+            if (Test-Path $candidate -PathType Container) {
+              $relPath = $candidate
+              break
+            }
+          }
           
           if (-not $relPath) {
             Write-Error "Could not locate build output directory"
@@ -85,9 +91,14 @@ jobs:
           }
           
           Write-Host "Packaging from: $relPath"
-          Compress-Archive -Path "$relPath\*" -DestinationPath "FewMB-Windows-x64.zip" -Force
-          $sizeMB = [math]::Round((Get-Item "FewMB-Windows-x64.zip").Length / 1MB, 2)
-          Write-Host "Created FewMB-Windows-x64.zip ($sizeMB MB)"
+          if (Test-Path "$relPath/*") {
+            Compress-Archive -Path "$relPath/*" -DestinationPath "FewMB-Windows-x64.zip" -Force
+            $sizeMB = [math]::Round((Get-Item "FewMB-Windows-x64.zip").Length / 1MB, 2)
+            Write-Host "Created FewMB-Windows-x64.zip ($sizeMB MB)"
+          } else {
+            Write-Error "No files found in $relPath to package"
+            exit 1
+          }
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
