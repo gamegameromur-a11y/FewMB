@@ -49,13 +49,14 @@ jobs:
             Get-ChildItem extracted | Copy-Item -Destination . -Recurse -Force
           }
 
-      - name: Install WebView2 SDK
+      - name: Setup vcpkg & install WebView2
         shell: pwsh
         run: |
-          nuget install ${{ env.WV2_PKG }} -OutputDirectory packages -NonInteractive
-          $wv2Root = (Get-ChildItem packages -Filter "${{ env.WV2_PKG }}.*" | Select-Object -First 1).FullName
-          $wv2Inc  = "$wv2Root\build\native\include"
-          $wv2Lib  = "$wv2Root\build\native\x64"
+          git clone https://github.com/microsoft/vcpkg.git C:\vcpkg --depth=1
+          C:\vcpkg\bootstrap-vcpkg.bat -disableMetrics
+          C:\vcpkg\vcpkg.exe install webview2:x64-windows --no-print-usage
+          $wv2Inc = "C:\vcpkg\installed\x64-windows\include"
+          $wv2Lib = "C:\vcpkg\installed\x64-windows\lib"
           echo "WV2_INCLUDE=$wv2Inc" >> $env:GITHUB_ENV
           echo "WV2_LIB=$wv2Lib"     >> $env:GITHUB_ENV
 
@@ -65,8 +66,8 @@ jobs:
           cmake -S . -B build `
             -G "Visual Studio 17 2022" -A x64 `
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
-            -DCMAKE_INCLUDE_PATH="${{ env.WV2_INCLUDE }}" `
-            -DCMAKE_LIBRARY_PATH="${{ env.WV2_LIB }}"
+            -DWV2_INCLUDE="$env:WV2_INCLUDE" `
+            -DWV2_LIB="$env:WV2_LIB"
 
       - name: Build
         shell: pwsh
@@ -96,7 +97,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item "build\bin\${{ env.BUILD_TYPE }}\${{ env.PROJECT }}.exe" dist\
-          $loader = "${{ env.WV2_LIB }}\WebView2Loader.dll"
+          $loader = "C:\vcpkg\installed\x64-windows\bin\WebView2Loader.dll"
           if (Test-Path $loader) { Copy-Item $loader dist\ }
           Compress-Archive -Path dist\* -DestinationPath "${{ env.PROJECT }}-Windows-x64.zip" -CompressionLevel Optimal -Force
 
